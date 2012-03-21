@@ -1,7 +1,7 @@
 (ns dun.core)
 
 (def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$", :booze "q", :sword "(", :armor "["
-               :shield "+", :monster "!"})
+               :shield "+", :spawner "!"})
 
 (defn random
   ([n] (random 0 n))
@@ -56,20 +56,25 @@
    :points (merge (zipmap (mapcat pointify rooms) (repeat :floor))
                   (zipmap (apply concat paths) (repeat :floor)))})
 
+(defn update-tile [level pos tile] (assoc-in level [:points pos] tile))
+
 (defn place-randomly
   ([level tile] (place-randomly level 1 tile))
   ([level n tile]
      (loop [i 0, {:keys [points] :as l} level]
-       (if (= i n) l (recur (inc i) (assoc-in l [:points ((rand-elt points) 0)] tile))))))
+       (if (= i n) l (recur (inc i) (update-tile l ((rand-elt points) 0) tile))))))
 
-(defn gen-loot [] (rand-nth [:gold, :booze, :sword, :shield, :armor]))
+(def distribution {:gold 5, :booze (random 2 3), :sword (random 2 3),
+                   :armor (rand-int 5), :shield (rand-int 2) :stairs 1})
+
+(defn add-monsters [{:keys [points] :as level} n]
+  (let [p (take n (shuffle (vec points)))]
+    (assoc (reduce #(update-tile %1 (%2 0) :spawner) level p) :spawners p)))
 
 (defn finalize [level]
-  (-> level
-      (place-randomly :stairs)
-      (place-randomly (rand-int 5) :booze)
-      (place-randomly 5 :gold)
-      (place-randomly (rand-int 10) :monster)))
+  (-> (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution)
+      (add-monsters (rand-int 10))
+      ))
 
 (defn gen-level [width height rooms]
   (-> (nth (iterate add-room (empty-level width height)) rooms) connect-rooms pointify-map finalize))
