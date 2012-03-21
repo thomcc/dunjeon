@@ -1,6 +1,7 @@
 (ns dun.core)
 
-(def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$"})
+(def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$", :booze "q", :sword "(", :armor "["
+               :shield "+", :monster "!"})
 
 (defn random
   ([n] (random 0 n))
@@ -50,19 +51,34 @@
           (partition 2 (interleave (repeat height (range x (+ x width)))
                                    (range y (+ y height))))))
 
-(defn finalize [{:keys [width, height, rooms, paths]}]
+(defn pointify-map [{:keys [width, height, rooms, paths]}]
   {:width width, :height height
-   :map (merge (zipmap (mapcat pointify rooms) (repeat :floor))
-               (zipmap (apply concat paths) (repeat :floor)))})
+   :points (merge (zipmap (mapcat pointify rooms) (repeat :floor))
+                  (zipmap (apply concat paths) (repeat :floor)))})
+
+(defn place-randomly
+  ([level tile] (place-randomly level 1 tile))
+  ([level n tile]
+     (loop [i 0, {:keys [points] :as l} level]
+       (if (= i n) l (recur (inc i) (assoc-in l [:points ((rand-elt points) 0)] tile))))))
+
+(defn gen-loot [] (rand-nth [:gold, :booze, :sword, :shield, :armor]))
+
+(defn finalize [level]
+  (-> level
+      (place-randomly :stairs)
+      (place-randomly (rand-int 5) :booze)
+      (place-randomly 5 :gold)
+      (place-randomly (rand-int 10) :monster)))
 
 (defn gen-level [width height rooms]
-  (finalize (connect-rooms (nth (iterate add-room (empty-level width height)) 9))))
+  (-> (nth (iterate add-room (empty-level width height)) rooms) connect-rooms pointify-map finalize))
 
-(defn draw-level [{width :width, height :height lvl :map}]
+(defn draw-level [{width :width, height :height lvl :points}]
   (doseq [y (range height), x (range width)]
     (when (= 0 x) (.println System/out))
     (.print System/out (char-rep (lvl [x y])))))
 
-(defn -main [& args] (draw-level (gen-level 80 80 30)))
+(defn -main [& args] (draw-level (gen-level 80 80 20)))
 
 
