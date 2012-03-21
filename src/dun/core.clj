@@ -31,14 +31,11 @@
   (let [x0 (random fx fw), y0 (random fy fh)
         x1 (random tx tw), y1 (random ty th)
         dx (signum (- x1 x0)), dy (signum (- y1 y0))]
-    (loop [x x0, y y0, points #{}, horizontal? (= (rand-int 2) 0)]
+    (loop [x x0, y y0, points #{}, horizontal? (zero? (rand-int 2))]
       (if (and (= x x1) (= y y1)) points
           (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y] [x (+ y dy)])]
             (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points
-                    (recur x y (conj points [x y])
-                           (boolean (if (= 0 (rand-int 10))
-                                      (not horizontal?)
-                                      horizontal?)))))))))
+                    (recur x y (conj points [x y]) (not= 0 (rand-int 10)))))))))
 
 (defn connect-rooms [{:keys [width, height, rooms] :as level}]
   (loop [from (rand-elt rooms), conn #{from}, unconn (disj rooms from), paths #{}]
@@ -48,8 +45,7 @@
 
 (defn pointify [{x :x, y :y, width :w, height :h}]
   (mapcat (fn [[row y]] (map #(vector % y) row))
-          (partition 2 (interleave (repeat height (range x (+ x width)))
-                                   (range y (+ y height))))))
+          (partition 2 (interleave (repeat height (range x (+ x width))) (range y (+ y height))))))
 
 (defn pointify-map [{:keys [width, height, rooms, paths]}]
   {:width width, :height height
@@ -61,8 +57,7 @@
 (defn place-randomly
   ([level tile] (place-randomly level 1 tile))
   ([level n tile]
-     (loop [i 0, {:keys [points] :as l} level]
-       (if (= i n) l (recur (inc i) (update-tile l ((rand-elt points) 0) tile))))))
+     (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t)) level (repeat n tile))))
 
 (def distribution {:gold 5, :booze (random 2 3), :sword (random 2 3),
                    :armor (rand-int 5), :shield (rand-int 2) :stairs 1})
@@ -73,8 +68,7 @@
 
 (defn finalize [level]
   (-> (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution)
-      (add-monsters (rand-int 10))
-      ))
+      (add-monsters (rand-int 10))))
 
 (defn gen-level [width height rooms]
   (-> (nth (iterate add-room (empty-level width height)) rooms) connect-rooms pointify-map finalize))
