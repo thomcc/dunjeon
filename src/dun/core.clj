@@ -1,8 +1,7 @@
 (ns dun.core
   (:use [dun level utils])
-  (:import [java.awt Color Graphics Graphics2D Dimension Font]
+  (:import [java.awt Color Graphics2D Dimension Font]
            [javax.swing JFrame JPanel]
-           [java.awt.font TextLayout FontRenderContext]
            [java.awt.event KeyEvent KeyAdapter]))
 
 (def panel-width 600)
@@ -14,7 +13,6 @@
 (def color-rep {:floor Color/white, nil Color/gray, :wall Color/gray, :stairs Color/white
                 :gold Color/yellow :booze Color/pink :Sword Color/blue :shield Color/blue
                 :armor Color/blue :spawner Color/red, :player Color/green})
-(def game-font (Font. "Monospaced", Font/PLAIN 14))
 (def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
 
 (defn draw-level [{width :width, height :height lvl :points}]
@@ -52,19 +50,15 @@
     KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
-(defn draw [^Graphics2D g
-            {{:keys [pos] :as player} :player,
-             {:keys [points width height] :as level} :level
-             :as game-state}]
-  (let [^FontRenderContext frc (.getFontRenderContext g)]
-    (doto g
-      (.setColor Color/black)
-      (.fillRect 0 0 panel-width panel-height)
-      (.setFont (Font. "Monospaced" Font/PLAIN 14)))
-    (doseq [xx (range width), yy (range height)]
-      (let [type (if (= [xx yy] pos) :player (points [xx yy]))]
-        (.setColor g (color-rep type))
-        (.draw (TextLayout. (char-rep type) game-font frc) g (* xx 11) (* yy 11))))))
+(defn draw [^Graphics2D g {{pos :pos} :player,{:keys [points width height]} :level}]
+  (doto g
+    (.setColor Color/black)
+    (.fillRect 0 0 panel-width panel-height)
+    (.setFont (Font. "Monospaced" Font/PLAIN 14)))
+  (doseq [xx (range width), yy (range height)]
+    (let [type (if (= [xx yy] pos) :player (points [xx yy]))]
+      (.setColor g (color-rep type))
+      (.drawString g (char-rep type) (* xx 11) (* yy 11)))))
 
 (defn -main [& args]
   (let [game-state (atom (initialize-gamestate (gen-level 50 50 (random 4 5))))
