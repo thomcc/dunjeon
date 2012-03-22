@@ -2,7 +2,7 @@
   (:import [java.awt Color Graphics2D Dimension Font]
            [javax.swing JFrame JPanel]
            [java.awt.event KeyEvent KeyAdapter]))
-
+;; constants and utility functions
 (def game-width 50)
 (def game-height 50)
 
@@ -18,17 +18,19 @@
 
 (def panel-height (* 11 (+ game-height 5)))
 
-(def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$", :booze "q",
-               :sword "(", :armor "[", :shield "+", :spawner "!", :player "@"})
+(def char-rep {::floor ".", nil "#", :wall "#", ::stairs ">", ::gold "$", ::booze "!",
+               ::sword "(", ::armor "[", ::shield "+",, ::player "@", ::monster "m"})
 
-(def color-rep {:floor Color/white, nil Color/gray, :wall Color/gray, :stairs Color/white
-                :gold Color/yellow :booze Color/pink :sword Color/blue :shield Color/blue
-                :armor Color/blue :spawner Color/red, :player Color/green})
+(def color-rep {::floor Color/white, nil Color/gray, ::wall Color/gray, ::stairs Color/white
+                ::gold Color/yellow ::booze Color/pink ::sword Color/blue ::shield Color/blue
+                ::armor Color/blue ::monster Color/red, ::player Color/green})
 
 (def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
 
-(def distribution {:gold 5, :booze (random 2 3), :sword (random 2 3),
-                   :armor (rand-int 5), :shield (rand-int 2) :stairs 1})
+(def distribution {::gold 5, ::booze (random 2 3), ::sword (random 2 3),
+                   ::armor (rand-int 5), ::shield (rand-int 2) ::stairs 1})
+
+;; random dungeon generation
 
 (defn intersects [{x0 :x, y0 :y, w0 :w, h0 :h}, {x1 :x, y1 :y, w1 :w, h1 :h}]
   (and (or (and (>= x0 x1) (<= x0 (+ x1 w1))) (and (>= x1 x0) (<= x1 (+ x0 w0))))
@@ -56,8 +58,8 @@
       (if (and (= x x1) (= y y1)) points
           (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y]
                           [x (+ y dy)])]
-            (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points
-                    (recur x y (conj points [x y]) (not= 0 (rand-int 10)))))))))
+            (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points        ; i use not= instead of zero? here
+                    (recur x y (conj points [x y]) (not= 0 (rand-int 10))))))))) ; because otherwise compiler weirdly complains.
 
 (defn connect-rooms [{:keys [width, height, rooms] :as level}]
   (loop [from (rand-elt rooms), conn #{from}, unconn (disj rooms from), paths #{}]
@@ -72,8 +74,8 @@
 
 (defn pointify-map [{:keys [width, height, rooms, paths]}]
   {:width width, :height height
-   :points (merge (zipmap (mapcat pointify rooms) (repeat :floor))
-                  (zipmap (apply concat paths) (repeat :floor)))})
+   :points (merge (zipmap (mapcat pointify rooms) (repeat ::floor))
+                  (zipmap (apply concat paths) (repeat ::floor)))})
 
 (defn update-tile [level pos tile] (assoc-in level [:points pos] tile))
 
@@ -85,8 +87,7 @@
              (repeat n tile))))
 
 (defn add-monsters [{:keys [points] :as level} n]
-  (let [p (take n (shuffle (vec points)))]
-    (assoc (reduce #(update-tile %1 (%2 0) :spawner) level p) :spawners p)))
+  (assoc level :monsters (set (take n (shuffle (vec points))))))
 
 (defn finalize [level]
   (-> (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution)
@@ -96,49 +97,69 @@
   (-> (nth (iterate add-room (empty-level width height)) rooms)
       connect-rooms pointify-map finalize))
 
-(defn draw-level [{width :width, height :height lvl :points}]
-  (doseq [y (range height), x (range width)]
-    (when (= 0 x) (.println System/out))
-    (.print System/out (char-rep (lvl [x y])))))
+;; game logic
 
 (defn initialize-gamestate [level]
-  {:level level, :player {:pos ((rand-elt (:points level)) 0),
-                          :health 50 :inv #{}, :score 0}})
+  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv #{}, :score 0}})
 
 (defn move [pos dir] (map + pos (directions dir)))
+
+(defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
+
+(derive ::sword ::item)
+(derive ::shield ::item)
+(derive ::armor ::item)
+
+(defmulti use-tile (fn [gs pos item] item))
+
+(defmethod use-tile :default [gs _ _] gs)
+(defmethod use-tile ::floor [gs _ _] gs)
+
+(defmethod use-tile ::item [gs pos it]
+  (-> gs (clear-tile pos) (update-in [:player :inv] conj it)))
+
+(defmethod use-tile ::booze [gs pos _]
+  (-> gs (clear-tile pos) (update-in [:player :health] + (random 5 5))))
+
+(defmethod use-tile ::gold [gs pos _]
+  (-> gs (clear-tile pos) (update-in [:player :score] + 25)))
+
+(defmethod use-tile ::stairs [{p :player :as gs} _ _]
+  (let [next-floor (gen-level 50 50 (random 4 5))]
+    (-> gs (assoc :level next-floor) (assoc-in [:player :pos] ((rand-elt (:points next-floor)) 0)))))
+
+(defn fight [gs mon] gs)
+
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
+
 (defmethod tick-player :default [game-state _] game-state)
+
 (defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
   (let [newpos (move pos dir)]
-    (if ((:points level) newpos) (assoc-in gs [:player :pos] newpos) gs)))
-
-(defmethod tick-player :action [{{:keys [pos inv]} :player, {pts :points} :level :as gs} [_ dir]]
-  (let [thing (pts pos)]
-    (condp #(% %2) thing
-      #{:sword :armor :shield} (-> gs (update-in [:player :inv] conj thing)
-                                   (assoc-in [:level :points pos] :floor))
-      #{:booze} (update-in gs [:player :health] (partial + (rand-int 10)))
-      #{:gold} (-> gs (update-in [:player :score] (partial + 100))
-                   (assoc-in [:level :points pos] :floor))
-      #{:spawner} (assoc-in gs [:level :points pos] :floor)
+    (if ((:points level) newpos)
+      (if-let [m ((:monsters level) newpos)] (fight gs m)
+              (assoc-in gs [:player :pos] newpos))
       gs)))
+
+(defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _]
+  (use-tile gs p (pts p)))
 
 (defn tick [game-state input] (-> game-state (tick-player input)))
 
 (defn comprehend [input]
-  ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south]
+  ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south],
     KeyEvent/VK_RIGHT [:move :east], KeyEvent/VK_LEFT [:move :west]
     KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
-(defn draw [^Graphics2D g {{pos :pos h :health s :score} :player,
-                           {:keys [points width height]} :level}]
+(defn draw [^Graphics2D g {{pos :pos h :health s :score} :player,{:keys [points width height]} :level}]
   (doto g
     (.setColor Color/black)
     (.fillRect 0 0 panel-width panel-height)
     (.setFont (Font. "Monospaced" Font/PLAIN 14)))
   (doseq [xx (range width), yy (range height)]
-    (let [type (if (= [xx yy] pos) :player (points [xx yy]))]
+    (let [type (if (= [xx yy] pos) ::player (points [xx yy]))]
+;      (prn type)
       (.setColor g (color-rep type))
       (.drawString g (char-rep type) (* xx 11) (* yy 11))))
   (doto g
@@ -147,7 +168,7 @@
     (.drawString (str "Score: " s) 11 (* 11 (+ game-height 2)))))
 
 (defn -main [& args]
-  (let [game-state (atom (initialize-gamestate (gen-level 50 50 (random 4 5))))
+  (let [game-state (atom (initialize-gamestate (gen-level game-width game-height (random 4 5))))
         dim (Dimension. panel-width panel-height)
         panel (doto (proxy [JPanel] [] (paint [g] (draw g @game-state)))
                 (.setMinimumSize dim)
