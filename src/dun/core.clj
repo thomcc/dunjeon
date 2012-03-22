@@ -23,21 +23,33 @@
     (.print System/out (char-rep (lvl [x y])))))
 
 (defn initialize-gamestate [level]
-  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50}})
+  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv #{} :score 0}})
 
-(defn move [pos dir] (map + pos (dir directions)))
+(defn move [pos dir] (map + pos (directions dir)))
+(defmulti tick-player (fn [gamestate [kind & args]] kind))
+(defmethod tick-player :default [game-state _] game-state)
+(defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
+  (let [newpos (move pos dir)]
+    (if ((:points level) newpos) (assoc-in gs [:player :pos] newpos) gs)))
 
-(defn tick-player [{{:keys [pos health] :as player} :player, level :level :as game-state} input]
-  (let [newpos (move pos input)]
-    (cond ((:points level) newpos) (assoc-in game-state [:player :pos] newpos)
-          :else game-state)))
+(defmethod tick-player :action [{{:keys [pos inv]} :player,
+                                 {pts :points} :level :as gs} [_ dir]]
+  (let [thing (pts pos)]
+    (condp #(% %2) thing
+      #{:sword :armor :shield} (-> gs (update-in [:player :inv] conj thing)
+                                   (assoc-in [:level :points pos] :floor))
+      #{:booze} (update-in gs [:player :health] (partial + (rand-int 10)))
+      #{:gold} (-> gs (update-in [:player :score] (partial + 100))
+                   (assoc-in [:level :points pos] :floor))
+      #{:spawner} (assoc-in gs [:level :points pos] :floor)
+      gs)))
 
-(defn tick [game-state input]
-  (tick-player game-state input))
+(defn tick [game-state input] (-> game-state (tick-player input)))
 
 (defn comprehend [input]
-  ({KeyEvent/VK_UP :north, KeyEvent/VK_DOWN :south
-    KeyEvent/VK_RIGHT :east, KeyEvent/VK_LEFT :west}
+  ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south]
+    KeyEvent/VK_RIGHT [:move :east], KeyEvent/VK_LEFT [:move :west]
+    KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
 (defn draw [^Graphics2D g
