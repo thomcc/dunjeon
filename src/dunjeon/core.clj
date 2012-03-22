@@ -3,9 +3,20 @@
            [javax.swing JFrame JPanel]
            [java.awt.event KeyEvent KeyAdapter]))
 
-(def panel-width 600)
+(def game-width 50)
+(def game-height 50)
 
-(def panel-height 600)
+(defn random
+  ([n] (random 0 n))
+  ([min range] (+ min (rand-int range))))
+
+(defn rand-elt [set] (rand-nth (vec set)))
+
+(defn signum [x] (if (zero? x) x (if (pos? x) 1 -1)))
+
+(def panel-width (* 11 game-width))
+
+(def panel-height (* 11 (+ game-height 5)))
 
 (def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$", :booze "q",
                :sword "(", :armor "[", :shield "+", :spawner "!", :player "@"})
@@ -18,14 +29,6 @@
 
 (def distribution {:gold 5, :booze (random 2 3), :sword (random 2 3),
                    :armor (rand-int 5), :shield (rand-int 2) :stairs 1})
-
-(defn random
-  ([n] (random 0 n))
-  ([min range] (+ min (rand-int range))))
-
-(defn rand-elt [set] (rand-nth (vec set)))
-
-(defn signum [x] (if (zero? x) x (if (pos? x) 1 -1)))
 
 (defn intersects [{x0 :x, y0 :y, w0 :w, h0 :h}, {x1 :x, y1 :y, w1 :w, h1 :h}]
   (and (or (and (>= x0 x1) (<= x0 (+ x1 w1))) (and (>= x1 x0) (<= x1 (+ x0 w0))))
@@ -43,13 +46,16 @@
 
 (defn empty-level [w h] {:width w, :height h, :rooms #{}})
 
-(defn connect [{:keys [width height]} {fx :x, fy :y, fw :w, fh :h} {tx :x, ty :y, tw :w, th :h}]
+(defn connect [{:keys [width height]}
+               {fx :x, fy :y, fw :w, fh :h}
+               {tx :x, ty :y, tw :w, th :h}]
   (let [x0 (random fx fw), y0 (random fy fh)
         x1 (random tx tw), y1 (random ty th)
         dx (signum (- x1 x0)), dy (signum (- y1 y0))]
     (loop [x x0, y y0, points #{}, horizontal? (not= (rand-int 2))]
       (if (and (= x x1) (= y y1)) points
-          (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y] [x (+ y dy)])]
+          (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y]
+                          [x (+ y dy)])]
             (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points
                     (recur x y (conj points [x y]) (not= 0 (rand-int 10)))))))))
 
@@ -61,7 +67,8 @@
 
 (defn pointify [{x :x, y :y, width :w, height :h}]
   (mapcat (fn [[row y]] (map #(vector % y) row))
-          (partition 2 (interleave (repeat height (range x (+ x width))) (range y (+ y height))))))
+          (partition 2 (interleave (repeat height (range x (+ x width)))
+                                   (range y (+ y height))))))
 
 (defn pointify-map [{:keys [width, height, rooms, paths]}]
   {:width width, :height height
@@ -73,7 +80,9 @@
 (defn place-randomly
   ([level tile] (place-randomly level 1 tile))
   ([level n tile]
-     (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t)) level (repeat n tile))))
+     (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t))
+             level
+             (repeat n tile))))
 
 (defn add-monsters [{:keys [points] :as level} n]
   (let [p (take n (shuffle (vec points)))]
@@ -84,7 +93,8 @@
       (add-monsters (rand-int 10))))
 
 (defn gen-level [width height rooms]
-  (-> (nth (iterate add-room (empty-level width height)) rooms) connect-rooms pointify-map finalize))
+  (-> (nth (iterate add-room (empty-level width height)) rooms)
+      connect-rooms pointify-map finalize))
 
 (defn draw-level [{width :width, height :height lvl :points}]
   (doseq [y (range height), x (range width)]
@@ -92,7 +102,8 @@
     (.print System/out (char-rep (lvl [x y])))))
 
 (defn initialize-gamestate [level]
-  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv #{} :score 0}})
+  {:level level, :player {:pos ((rand-elt (:points level)) 0),
+                          :health 50 :inv #{}, :score 0}})
 
 (defn move [pos dir] (map + pos (directions dir)))
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
@@ -120,7 +131,8 @@
     KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
-(defn draw [^Graphics2D g {{pos :pos} :player,{:keys [points width height]} :level}]
+(defn draw [^Graphics2D g {{pos :pos h :health s :score} :player,
+                           {:keys [points width height]} :level}]
   (doto g
     (.setColor Color/black)
     (.fillRect 0 0 panel-width panel-height)
@@ -128,7 +140,11 @@
   (doseq [xx (range width), yy (range height)]
     (let [type (if (= [xx yy] pos) :player (points [xx yy]))]
       (.setColor g (color-rep type))
-      (.drawString g (char-rep type) (* xx 11) (* yy 11)))))
+      (.drawString g (char-rep type) (* xx 11) (* yy 11))))
+  (doto g
+    (.setColor Color/white)
+    (.drawString (str "Health: " h) 11 (* 11 (+ game-height 1)))
+    (.drawString (str "Score: " s) 11 (* 11 (+ game-height 2)))))
 
 (defn -main [& args]
   (let [game-state (atom (initialize-gamestate (gen-level 50 50 (random 4 5))))
