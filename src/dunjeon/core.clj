@@ -4,7 +4,20 @@
            [java.awt.event KeyEvent KeyAdapter]))
 
 (def panel-width 600)
+
 (def panel-height 600)
+
+(def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$", :booze "q",
+               :sword "(", :armor "[", :shield "+", :spawner "!", :player "@"})
+
+(def color-rep {:floor Color/white, nil Color/gray, :wall Color/gray, :stairs Color/white
+                :gold Color/yellow :booze Color/pink :sword Color/blue :shield Color/blue
+                :armor Color/blue :spawner Color/red, :player Color/green})
+
+(def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
+
+(def distribution {:gold 5, :booze (random 2 3), :sword (random 2 3),
+                   :armor (rand-int 5), :shield (rand-int 2) :stairs 1})
 
 (defn random
   ([n] (random 0 n))
@@ -62,9 +75,6 @@
   ([level n tile]
      (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t)) level (repeat n tile))))
 
-(def distribution {:gold 5, :booze (random 2 3), :sword (random 2 3),
-                   :armor (rand-int 5), :shield (rand-int 2) :stairs 1})
-
 (defn add-monsters [{:keys [points] :as level} n]
   (let [p (take n (shuffle (vec points)))]
     (assoc (reduce #(update-tile %1 (%2 0) :spawner) level p) :spawners p)))
@@ -75,14 +85,6 @@
 
 (defn gen-level [width height rooms]
   (-> (nth (iterate add-room (empty-level width height)) rooms) connect-rooms pointify-map finalize))
-
-(def char-rep {:floor ".", nil "#", :wall "#", :stairs ">", :gold "$", :booze "q",
-               :sword "(", :armor "[", :shield "+", :spawner "!", :player "@"})
-
-(def color-rep {:floor Color/white, nil Color/gray, :wall Color/gray, :stairs Color/white
-                :gold Color/yellow :booze Color/pink :Sword Color/blue :shield Color/blue
-                :armor Color/blue :spawner Color/red, :player Color/green})
-(def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
 
 (defn draw-level [{width :width, height :height lvl :points}]
   (doseq [y (range height), x (range width)]
@@ -99,8 +101,7 @@
   (let [newpos (move pos dir)]
     (if ((:points level) newpos) (assoc-in gs [:player :pos] newpos) gs)))
 
-(defmethod tick-player :action [{{:keys [pos inv]} :player,
-                                 {pts :points} :level :as gs} [_ dir]]
+(defmethod tick-player :action [{{:keys [pos inv]} :player, {pts :points} :level :as gs} [_ dir]]
   (let [thing (pts pos)]
     (condp #(% %2) thing
       #{:sword :armor :shield} (-> gs (update-in [:player :inv] conj thing)
