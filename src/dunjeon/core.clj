@@ -1,4 +1,4 @@
-(ns dun.core
+(ns dunjeon.core
   (:import [java.awt Color Graphics2D Dimension Font]
            [javax.swing JFrame JPanel]
            [java.awt.event KeyEvent KeyAdapter]))
