@@ -73,7 +73,7 @@
                                    (range y (+ y height))))))
 
 (defn pointify-map [{:keys [width, height, rooms, paths]}]
-  {:width width, :height height
+  {:width width, :height height, :seen #{},
    :points (merge (zipmap (mapcat pointify rooms) (repeat ::floor))
                   (zipmap (apply concat paths) (repeat ::floor)))})
 
@@ -100,20 +100,16 @@
 ;; game logic
 
 (defn initialize-gamestate [level]
-  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv [], :score 0} :messages ()})
+  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv [], :sees #{} :score 0} :messages ()})
 
 (defn move [pos dir] (map + pos (directions dir)))
-
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
-
 (defn add-msg [gs msg] (update-in gs [:messages] conj msg))
 
 (derive ::sword  ::item)
 (derive ::shield ::item)
 (derive ::armor  ::item)
-
 (defmulti use-tile (fn [gs pos item] item))
-
 (defmethod use-tile :default [gs _ _] gs)
 (defmethod use-tile ::floor [gs _ _] gs)
 
@@ -154,6 +150,19 @@
   (loop [[{p :pos :as m} & ms] (seq mons)]
     (cond (= p pos) m, (not ms) nil, :else (recur ms))))
 
+(defn can-see? [{pts :points} [x y :as source] [fx fy :as end]]
+  (or (and (= x fx) (= y fy))
+      (let [[x2 y2 :as dest] (map #(+ %2 (/ (signum (- % %2)) 2.0)) source end)
+            [distx disty :as dist] (map - dest source)
+            length (max (Math/abs distx) (Math/abs disty))
+            [dx dy :as delta] (map #(/ % length) dist)]
+        (loop [len length, [xx yy :as pos] source]
+          (or (neg? len)
+              (let [ix (int (+ xx 0.5)), iy (int (+ yy 0.5))]
+                (cond (and (= ix x2) (= iy y2)) true
+                      (and (not (and (= ix x) (= iy y))) (not (pts [ix iy]))) false
+                      :else (recur (dec len) [(+ dx xx) (+ dy yy)]))))))))
+
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
 
 (defmethod tick-player :default [game-state _] game-state)
@@ -168,8 +177,19 @@
 (defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _]
   (use-tile gs p (pts p)))
 
+(defn update-vision [{{seen :seen :as lvl} :level,{[x y] :pos :as player} :player :as game-state}]
+  (let [visible (for [xx (range -10 10), yy (range -10 10)
+                      :when (and (<= (+ (* xx xx) (* yy yy)) 100)
+                                 (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
+                  [(+ xx x) (+ yy y)])]
+    (-> game-state
+        (assoc-in [:level :seen] (into seen visible))
+        (assoc-in [:player :sees] (set visible)))))
+
 (defn tick [game-state input]
-  (-> game-state (tick-player input)))
+  (-> game-state
+      (tick-player input)
+      update-vision))
 
 (defn comprehend [input]
   ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south],
@@ -177,15 +197,25 @@
     KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
-(defn draw [^Graphics2D g {{pos :pos h :health s :score} :player,{:keys [points width height monsters]} :level msgs :messages}]
+(defn draw [^Graphics2D g {{[px py :as pos] :pos h :health s :score sees :sees :as play} :player,
+                           {:keys [points width height monsters seen]} :level
+                           msgs :messages}]
   (doto g
     (.setColor Color/black)
     (.fillRect 0 0 panel-width panel-height)
     (.setFont (Font. "Monospaced" Font/PLAIN 13)))
-  (let [monpts (set (map :pos monsters))]
+  (let [monpts (set (map :pos monsters))
+        post-process (fn [col sees? seen?]
+                       (cond (not (or sees? seen?)) Color/black
+                             (not sees?) (.darker (.darker col))
+                             :else col))]
     (doseq [xx (range width), yy (range (+ height 1))]
-      (let [p [xx yy], type (cond (= p pos) ::player, (monpts p) ::monster, :else (points p))]
-        (.setColor g (color-rep type))
+;      (prn {:sees sees :seen seen :xx xx :yy yy :player play})
+      (let [p [xx yy],
+            type (cond (= p pos) ::player, (monpts p) ::monster, :else (points p))
+            p-vis (sees p), p-rem (seen p)]
+
+        (.setColor g (post-process (color-rep type) p-vis p-rem))
         (.drawString g (char-rep type) (* xx 11) (* yy 11)))))
   (.setColor g Color/white)
   (dorun 3 (map-indexed #(.drawString g %2 (* 15 11) (* 11 (+ 4 game-height (- %)))) msgs))
@@ -194,7 +224,7 @@
     (.drawString (str "Score: " s) 11 (* 11 (+ game-height 2)))))
 
 (defn -main [& args]
-  (let [game-state (atom (initialize-gamestate (gen-level game-width game-height (random 4 5))))
+  (let [game-state (atom (update-vision (initialize-gamestate (gen-level game-width game-height (random 4 5)))))
         dim (Dimension. panel-width panel-height)
         panel (doto (proxy [JPanel] [] (paint [g] (draw g @game-state)))
                 (.setMinimumSize dim)
