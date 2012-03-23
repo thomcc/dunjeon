@@ -3,34 +3,30 @@
            [javax.swing JFrame JPanel]
            [java.awt.event KeyEvent KeyAdapter])
   (:require [clojure.set :as set]))
+
 (set! *warn-on-reflection* true)
+
 ;; constants and utility functions
+
 (def game-width (int 50))
 (def game-height (int 50))
 
-(defn random
-  ([n] (random 0 n))
-  ([min range] (+ min (rand-int range))))
-
+(defn random [min range] (+ min (rand-int range)))
 (defn rand-elt [set] (rand-nth (vec set)))
-
 (defn signum [x] (if (zero? x) x (if (pos? x) 1 -1)))
 
 (def panel-width (* 11 game-width))
-
 (def panel-height (* 11 (+ game-height 5)))
 
-(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!",
-               ::sword "(", ::armor "[", ::shield "+",, ::player "@", ::monster "m"})
+(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!", ::sword "(", ::armor "[", ::shield "+",
+               ::player "@", ::monster "m"})
 
-(def color-rep {::floor Color/white, nil Color/gray, ::stairs Color/white
-                ::gold Color/yellow ::booze Color/pink ::sword Color/blue ::shield Color/blue
-                ::armor Color/blue ::monster Color/red, ::player Color/green})
+(def color-rep {::floor Color/white, nil Color/gray, ::stairs Color/white, ::gold Color/yellow ::booze Color/pink
+                ::sword Color/blue ::shield Color/blue, ::armor Color/blue ::monster Color/red, ::player Color/green})
 
 (def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
-
-(def distribution {::gold 5, ::booze (random 2 3), ::sword (random 2 3),
-                   ::armor (rand-int 5), ::shield (rand-int 2) ::stairs 1})
+(def distribution {::gold 5, ::booze (random 2 3), ::sword (random 2 3), ::armor (rand-int 5), ::shield (rand-int 2)
+                   ::stairs 1})
 
 ;; random dungeon generation
 
@@ -38,30 +34,28 @@
   (and (or (and (>= x0 x1) (<= x0 (+ x1 w1))) (and (>= x1 x0) (<= x1 (+ x0 w0))))
        (or (and (>= y0 y1) (<= y0 (+ y1 h1))) (and (>= y1 y0) (<= y1 (+ y0 h0))))))
 
+(defn empty-map [w h] {:width w, :height h, :rooms #{}})
 (defn room [{:keys [width height]}]
   {:x (random 2 (- width 13)) :y (random 2 (- width 13)) :w (random 3 10) :h (random 3 10)})
 
-(defn add-room [{rooms :rooms :as level}]
-  (letfn [(available? [r] (not-any? #(intersects r %) rooms))]
-    (loop [r (room level), i 0]
-      (cond (available? r) (assoc level :rooms (conj rooms r))
-            (> i 1000) level
-            :else (recur (room level) (inc i))))))
+(defn add-rooms
+  ([level n] (nth (iterate add-rooms level) n))
+  ([{rooms :rooms :as level}]
+     (letfn [(available? [r] (not-any? #(intersects r %) rooms))]
+       (loop [r (room level), i 0]
+         (cond (available? r) (assoc level :rooms (conj rooms r))
+               (> i 1000) level
+               :else (recur (room level) (inc i)))))))
 
-(defn empty-level [w h] {:width w, :height h, :rooms #{}})
-
-(defn connect [{:keys [width height]}
-               {fx :x, fy :y, fw :w, fh :h}
-               {tx :x, ty :y, tw :w, th :h}]
+(defn connect [{:keys [width height]}, {fx :x, fy :y, fw :w, fh :h}, {tx :x, ty :y, tw :w, th :h}]
   (let [x0 (random fx fw), y0 (random fy fh)
         x1 (random tx tw), y1 (random ty th)
         dx (signum (- x1 x0)), dy (signum (- y1 y0))]
     (loop [x x0, y y0, points #{}, horizontal? (not= (rand-int 2))]
       (if (and (= x x1) (= y y1)) points
-          (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y]
-                          [x (+ y dy)])]
+          (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y] [x (+ y dy)])]
             (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points        ; i use not= instead of zero? here
-                    (recur x y (conj points [x y]) (not= 0 (rand-int 10))))))))) ; because otherwise compiler weirdly complains.
+                    (recur x y (conj points [x y]) (not= 0 (rand-int 10))))))))) ; because otherwise compiler complains.
 
 (defn connect-rooms [{:keys [width, height, rooms] :as level}]
   (loop [from (rand-elt rooms), conn #{from}, unconn (disj rooms from), paths #{}]
@@ -74,30 +68,25 @@
           (partition 2 (interleave (repeat height (range x (+ x width)))
                                    (range y (+ y height))))))
 
-(defn pointify-map [{:keys [width, height, rooms, paths]}]
+(defn levelify-map [{:keys [width, height, rooms, paths]}]
   {:width width, :height height, :seen #{},
    :points (merge (zipmap (mapcat pointify rooms) (repeat ::floor))
                   (zipmap (apply concat paths) (repeat ::floor)))})
 
-(defn update-tile [level pos tile] (assoc-in level [:points pos] tile))
-
 (defn place-randomly [level n tile]
-  (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t))
+  (reduce (fn [{p :points :as l} t] (assoc-in l [:points ((rand-elt p) 0)] t))
           level (repeat n tile)))
 
 (defn make-monster [pos] {:pos pos, :health 10})
-
 (defn add-monsters [{:keys [points] :as level} n]
   (let [mpts (map #(% 0) (take n (shuffle (vec points))))]
     (assoc level :monsters (set (map make-monster mpts)))))
 
 (defn finalize [level]
-  (-> (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution)
-      (add-monsters (rand-int 10))))
+  (add-monsters (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution) (random 5 5)))
 
 (defn gen-level [width height rooms]
-  (-> (nth (iterate add-room (empty-level width height)) rooms)
-      connect-rooms pointify-map finalize))
+  (-> (empty-map width height) (add-rooms rooms) connect-rooms levelify-map finalize))
 
 ;; game logic
 
@@ -120,7 +109,7 @@
                                  (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
                   [(+ xx x) (+ yy y)])]
     (-> game-state
-        (assoc-in [:level :seen] (into seen visible))
+        (assoc-in [:level :seen] (reduce conj seen visible))
         (assoc-in [:player :sees] (set visible)))))
 
 (defn initialize-gamestate []
@@ -130,7 +119,6 @@
       :player {:pos ((rand-elt (:points level)) 0),
                :health 50 :inv [], :sees #{} :score 0, :level 0}
       :messages '("You enter level 0.", "Welcome to the dunjeon.")})))
-
 
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
 (defn add-msg [gs msg] (update-in gs [:messages] conj msg))
@@ -182,6 +170,7 @@
 
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
 (defmethod tick-player :default [game-state _] game-state)
+(defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _] (use-tile gs p (pts p)))
 
 (defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
   (let [newpos (map + pos (directions dir))]
@@ -189,9 +178,6 @@
       (if-let [m (monster-at gs newpos)] (fight gs m)
               (assoc-in gs [:player :pos] newpos))
       gs)))
-
-(defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _]
-  (use-tile gs p (pts p)))
 
 (defn tick-monsters [{{ms :monsters, pts :points} :level {pp :pos} :player :as gs}]
   (assoc-in gs [:level :monsters]
@@ -212,8 +198,7 @@
    (.getKeyCode input)))
 
 (defn draw [^Graphics2D g {{[px py :as pos] :pos h :health s :score sees :sees, lv :level :as play} :player,
-                           {:keys [points width height monsters seen]} :level
-                           msgs :messages}]
+                           {:keys [points width height monsters seen]} :level, msgs :messages}]
   (doto g
     (.setColor Color/black)
     (.fillRect 0 0 panel-width panel-height)
