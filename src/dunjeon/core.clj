@@ -2,9 +2,10 @@
   (:import [java.awt Color Graphics2D Dimension Font]
            [javax.swing JFrame JPanel]
            [java.awt.event KeyEvent KeyAdapter]))
+(set! *warn-on-reflection* true)
 ;; constants and utility functions
-(def game-width 50)
-(def game-height 50)
+(def game-width (int 50))
+(def game-height (int 50))
 
 (defn random
   ([n] (random 0 n))
@@ -154,7 +155,7 @@
   (or (and (= x fx) (= y fy))
       (let [[x2 y2 :as dest] (map #(+ %2 (/ (signum (- % %2)) 2.0)) source end)
             [distx disty :as dist] (map - dest source)
-            length (max (Math/abs distx) (Math/abs disty))
+            length (max (Math/abs (double distx)) (Math/abs (double disty)))
             [dx dy :as delta] (map #(/ % length) dist)]
         (loop [len length, [xx yy :as pos] source]
           (or (neg? len)
@@ -177,6 +178,17 @@
 (defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _]
   (use-tile gs p (pts p)))
 
+(defn tick-monsters [{{ms :monsters, pts :points} :level {pp :pos} :player :as gs}]
+  (assoc-in gs [:level :monsters]
+            (set (map (fn [{p :pos :as m}]
+                        (let [d (rand-nth (vals directions)),
+                              npos (map + p d),
+                              can? (and (pts npos) (not= pp npos))]
+                          (cond can? (assoc m :pos npos)
+                                :else m)))
+                      ms))))
+
+
 (defn update-vision [{{seen :seen :as lvl} :level,{[x y] :pos :as player} :player :as game-state}]
   (let [visible (for [xx (range -10 10), yy (range -10 10)
                       :when (and (<= (+ (* xx xx) (* yy yy)) 100)
@@ -189,9 +201,10 @@
 (defn tick [game-state input]
   (-> game-state
       (tick-player input)
+      tick-monsters
       update-vision))
 
-(defn comprehend [input]
+(defn comprehend [^KeyEvent input]
   ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south],
     KeyEvent/VK_RIGHT [:move :east], KeyEvent/VK_LEFT [:move :west]
     KeyEvent/VK_ENTER [:action]}
@@ -207,21 +220,22 @@
   (let [monpts (set (map :pos monsters))
         post-process (fn [col sees? seen?]
                        (cond (not (or sees? seen?)) Color/black
-                             (not sees?) (.darker (.darker col))
+                             (not sees?) (.darker (.darker ^Color col))
                              :else col))]
-    (doseq [xx (range width), yy (range (+ height 1))]
+;    (prn monsters)
+    (doseq [xx (range width), yy (range (inc height))]
 ;      (prn {:sees sees :seen seen :xx xx :yy yy :player play})
       (let [p [xx yy],
             type (cond (= p pos) ::player, (monpts p) ::monster, :else (points p))
             p-vis (sees p), p-rem (seen p)]
-
         (.setColor g (post-process (color-rep type) p-vis p-rem))
-        (.drawString g (char-rep type) (* xx 11) (* yy 11)))))
+        (.drawString g ^String (char-rep type) (int (* xx 11)) (int (* yy 11))))))
   (.setColor g Color/white)
-  (dorun 3 (map-indexed #(.drawString g %2 (* 15 11) (* 11 (+ 4 game-height (- %)))) msgs))
+  (dorun 3 (map-indexed #(.drawString g ^String %2 (* 15 11)
+                                      (int (* 11 (+ 4 game-height (- %))))) msgs))
   (doto g
-    (.drawString (str "Health: " h) 11 (* 11 (+ game-height 1)))
-    (.drawString (str "Score: " s) 11 (* 11 (+ game-height 2)))))
+    (.drawString (str "Health: " h) 11 (int (* 11 (inc game-height))))
+    (.drawString (str "Score: " s) 11 (int (* 11 (+ game-height 2))))))
 
 (defn -main [& args]
   (let [game-state (atom (update-vision (initialize-gamestate (gen-level game-width game-height (random 4 5)))))
