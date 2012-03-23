@@ -18,15 +18,13 @@
 (def panel-width (* 11 game-width))
 (def panel-height (* 11 (+ game-height 5)))
 
-(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!", ::sword "(", ::armor "[", ::shield "+",
-               ::player "@", ::monster "m"})
+(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!",::player "@", ::monster "m"})
 
 (def color-rep {::floor Color/white, nil Color/gray, ::stairs Color/white, ::gold Color/yellow ::booze Color/pink
-                ::sword Color/blue ::shield Color/blue, ::armor Color/blue ::monster Color/red, ::player Color/green})
-
+                ::monster Color/red, ::player Color/green})
+(def auto-use #{::gold})
 (def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
-(def distribution {::gold 5, ::booze (random 2 3), ::sword (random 2 3), ::armor (rand-int 5), ::shield (rand-int 2)
-                   ::stairs 1})
+(def distribution {::gold 5, ::booze (random 2 3), ::stairs 1})
 
 ;; random dungeon generation
 
@@ -105,8 +103,7 @@
 
 (defn update-vision [{{seen :seen :as lvl} :level,{[x y] :pos :as player} :player :as game-state}]
   (let [visible (for [xx (range -10 10), yy (range -10 10)
-                      :when (and (<= (+ (* xx xx) (* yy yy)) 100)
-                                 (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
+                      :when (and (<= (+ (* xx xx) (* yy yy)) 100) (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
                   [(+ xx x) (+ yy y)])]
     (-> game-state
         (assoc-in [:level :seen] (reduce conj seen visible))
@@ -123,23 +120,13 @@
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
 (defn add-msg [gs msg] (update-in gs [:messages] conj msg))
 
-(derive ::sword  ::item)
-(derive ::shield ::item)
-(derive ::armor  ::item)
 (defmulti use-tile (fn [gs pos item] item))
 (defmethod use-tile :default [gs _ _] gs)
 (defmethod use-tile ::floor [gs _ _] gs)
-
-(defmethod use-tile ::item [game-state pos it]
-  (-> game-state
-      (clear-tile pos)
-      (update-in [:player :inv] conj it)
-      (add-msg (str "You pick up a shiny new " (name it) "."))))
-
 (defmethod use-tile ::booze [game-state pos _]
   (let [healed (random 2 7)]
-   (-> game-state
-       (clear-tile pos)
+    (-> game-state
+        (clear-tile pos)
        (update-in [:player :health] + healed)
        (add-msg (str "The booze heals you for " healed " points.")))))
 
@@ -173,24 +160,20 @@
 (defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _] (use-tile gs p (pts p)))
 
 (defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
-  (let [newpos (map + pos (directions dir))]
-    (if ((:points level) newpos)
-      (if-let [m (monster-at gs newpos)] (fight gs m)
-              (assoc-in gs [:player :pos] newpos))
-      gs)))
+  (let [newpos (map + pos (directions dir)), tile ((:points level) newpos), mon (monster-at gs newpos)]
+    (cond (not tile) gs
+          mon (fight gs mon)
+          (auto-use tile) (use-tile (assoc-in gs [:player :pos] newpos) newpos tile)
+          :else (assoc-in gs [:player :pos] newpos))))
 
 (defn tick-monsters [{{ms :monsters, pts :points} :level {pp :pos} :player :as gs}]
   (assoc-in gs [:level :monsters]
             (set (map (fn [{p :pos :as m}]
-                        (let [d (rand-nth (vals directions)),
-                              npos (map + p d),
-                              can? (and (pts npos) (not= pp npos))]
-                          (cond can? (assoc m :pos npos)
-                                :else m)))
+                        (let [d (rand-nth (vals directions)), npos (map + p d), can? (and (pts npos) (not= pp npos))]
+                          (if can? (assoc m :pos npos) m)))
                       ms))))
 
-(defn tick [game-state input]
-  (-> game-state (tick-player input) tick-monsters update-vision))
+(defn tick [game-state input] (-> game-state (tick-player input) tick-monsters update-vision))
 
 (defn comprehend [^KeyEvent input]
   ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south], KeyEvent/VK_RIGHT [:move :east],
@@ -228,11 +211,9 @@
                 (.setMinimumSize dim)
                 (.setPreferredSize dim)
                 (.setMaximumSize dim))
-        ka (proxy [KeyAdapter] []
-             (keyPressed [e]
-               (when-let [input (comprehend e)]
-                 (swap! game-state tick input)
-                 (.repaint panel))))]
+        ka (proxy [KeyAdapter] [] (keyPressed [e] (when-let [input (comprehend e)]
+                                                    (swap! game-state tick input)
+                                                    (.repaint panel))))]
     (doto (JFrame. "(dunjeon)")
       (.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE)
       (.add panel) .pack
