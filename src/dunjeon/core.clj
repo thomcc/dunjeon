@@ -151,18 +151,18 @@
   (loop [[{p :pos :as m} & ms] (seq mons)]
     (cond (= p pos) m, (not ms) nil, :else (recur ms))))
 
-(defn can-see? [{pts :points} [x y :as source] [fx fy :as end]]
-  (or (and (= x fx) (= y fy))
-      (let [[x2 y2 :as dest] (map #(+ %2 (/ (signum (- % %2)) 2.0)) source end)
+(defn can-see? [{pts :points} source end]
+  (or (= source end)
+      (let [dest (map #(+ %2 (/ (signum (- % %2)) 2.0)) source end)
             [distx disty :as dist] (map - dest source)
             length (max (Math/abs (double distx)) (Math/abs (double disty)))
-            [dx dy :as delta] (map #(/ % length) dist)]
-        (loop [len length, [xx yy :as pos] source]
+            delta (map #(/ % length) dist)]
+        (loop [len length, pos source]
           (or (neg? len)
-              (let [ix (int (+ xx 0.5)), iy (int (+ yy 0.5))]
-                (cond (and (= ix x2) (= iy y2)) true
-                      (and (not (and (= ix x) (= iy y))) (not (pts [ix iy]))) false
-                      :else (recur (dec len) [(+ dx xx) (+ dy yy)]))))))))
+              (let [moved (map (comp int (partial + 0.5)) pos)]
+                (cond (= moved dest) true
+                      (and (not (= moved source)) (not (pts moved))) false
+                      :else (recur (dec len) (map + delta pos)))))))))
 
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
 
