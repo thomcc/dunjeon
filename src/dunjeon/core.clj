@@ -1,7 +1,8 @@
 (ns dunjeon.core
   (:import [java.awt Color Graphics2D Dimension Font]
            [javax.swing JFrame JPanel]
-           [java.awt.event KeyEvent KeyAdapter]))
+           [java.awt.event KeyEvent KeyAdapter])
+  (:require [clojure.set :as set]))
 (set! *warn-on-reflection* true)
 ;; constants and utility functions
 (def game-width (int 50))
@@ -100,10 +101,37 @@
 
 ;; game logic
 
-(defn initialize-gamestate [level]
-  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv [], :sees #{} :score 0} :messages ()})
+(defn can-see? [{pts :points} source end]
+  (or (= source end)
+      (let [dest (map #(+ %2 (/ (signum (- % %2)) 2.0)) source end)
+            [distx disty :as dist] (map - dest source)
+            length (max (Math/abs (double distx)) (Math/abs (double disty)))
+            delta (map #(/ % length) dist)]
+        (loop [len length, pos source]
+          (or (neg? len)
+              (let [moved (map (comp int (partial + 0.5)) pos)]
+                (cond (= moved dest) true
+                      (and (not (= moved source)) (not (pts moved))) false
+                      :else (recur (dec len) (map + delta pos)))))))))
 
-(defn move [pos dir] (map + pos (directions dir)))
+(defn update-vision [{{seen :seen :as lvl} :level,{[x y] :pos :as player} :player :as game-state}]
+  (let [visible (for [xx (range -10 10), yy (range -10 10)
+                      :when (and (<= (+ (* xx xx) (* yy yy)) 100)
+                                 (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
+                  [(+ xx x) (+ yy y)])]
+    (-> game-state
+        (assoc-in [:level :seen] (into seen visible))
+        (assoc-in [:player :sees] (set visible)))))
+
+(defn initialize-gamestate []
+  (let [level (gen-level game-width game-height (random 5 4))]
+    (update-vision
+     {:level level
+      :player {:pos ((rand-elt (:points level)) 0),
+               :health 50 :inv [], :sees #{} :score 0}
+      :messages ()})))
+
+
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
 (defn add-msg [gs msg] (update-in gs [:messages] conj msg))
 
@@ -151,25 +179,11 @@
   (loop [[{p :pos :as m} & ms] (seq mons)]
     (cond (= p pos) m, (not ms) nil, :else (recur ms))))
 
-(defn can-see? [{pts :points} source end]
-  (or (= source end)
-      (let [dest (map #(+ %2 (/ (signum (- % %2)) 2.0)) source end)
-            [distx disty :as dist] (map - dest source)
-            length (max (Math/abs (double distx)) (Math/abs (double disty)))
-            delta (map #(/ % length) dist)]
-        (loop [len length, pos source]
-          (or (neg? len)
-              (let [moved (map (comp int (partial + 0.5)) pos)]
-                (cond (= moved dest) true
-                      (and (not (= moved source)) (not (pts moved))) false
-                      :else (recur (dec len) (map + delta pos)))))))))
-
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
-
 (defmethod tick-player :default [game-state _] game-state)
 
 (defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
-  (let [newpos (move pos dir)]
+  (let [newpos (map + pos (directions dir))]
     (if ((:points level) newpos)
       (if-let [m (monster-at gs newpos)] (fight gs m)
               (assoc-in gs [:player :pos] newpos))
@@ -188,26 +202,12 @@
                                 :else m)))
                       ms))))
 
-
-(defn update-vision [{{seen :seen :as lvl} :level,{[x y] :pos :as player} :player :as game-state}]
-  (let [visible (for [xx (range -10 10), yy (range -10 10)
-                      :when (and (<= (+ (* xx xx) (* yy yy)) 100)
-                                 (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
-                  [(+ xx x) (+ yy y)])]
-    (-> game-state
-        (assoc-in [:level :seen] (into seen visible))
-        (assoc-in [:player :sees] (set visible)))))
-
 (defn tick [game-state input]
-  (-> game-state
-      (tick-player input)
-      tick-monsters
-      update-vision))
+  (-> game-state (tick-player input) tick-monsters update-vision))
 
 (defn comprehend [^KeyEvent input]
-  ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south],
-    KeyEvent/VK_RIGHT [:move :east], KeyEvent/VK_LEFT [:move :west]
-    KeyEvent/VK_ENTER [:action]}
+  ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south], KeyEvent/VK_RIGHT [:move :east],
+    KeyEvent/VK_LEFT [:move :west], KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
 (defn draw [^Graphics2D g {{[px py :as pos] :pos h :health s :score sees :sees :as play} :player,
@@ -217,28 +217,25 @@
     (.setColor Color/black)
     (.fillRect 0 0 panel-width panel-height)
     (.setFont (Font. "Monospaced" Font/PLAIN 13)))
-  (let [monpts (set (map :pos monsters))
+  (let [monpts (set/intersection sees (set (map :pos monsters)))
         post-process (fn [col sees? seen?]
                        (cond (not (or sees? seen?)) Color/black
                              (not sees?) (.darker (.darker ^Color col))
                              :else col))]
-;    (prn monsters)
     (doseq [xx (range width), yy (range (inc height))]
-;      (prn {:sees sees :seen seen :xx xx :yy yy :player play})
       (let [p [xx yy],
             type (cond (= p pos) ::player, (monpts p) ::monster, :else (points p))
             p-vis (sees p), p-rem (seen p)]
         (.setColor g (post-process (color-rep type) p-vis p-rem))
         (.drawString g ^String (char-rep type) (int (* xx 11)) (int (* yy 11))))))
   (.setColor g Color/white)
-  (dorun 3 (map-indexed #(.drawString g ^String %2 (* 15 11)
-                                      (int (* 11 (+ 4 game-height (- %))))) msgs))
+  (dorun 3 (map-indexed #(.drawString g ^String %2 (* 15 11) (int (* 11 (+ 4 game-height (- %))))) msgs))
   (doto g
     (.drawString (str "Health: " h) 11 (int (* 11 (inc game-height))))
     (.drawString (str "Score: " s) 11 (int (* 11 (+ game-height 2))))))
 
 (defn -main [& args]
-  (let [game-state (atom (update-vision (initialize-gamestate (gen-level game-width game-height (random 4 5)))))
+  (let [game-state (atom (initialize-gamestate))
         dim (Dimension. panel-width panel-height)
         panel (doto (proxy [JPanel] [] (paint [g] (draw g @game-state)))
                 (.setMinimumSize dim)
