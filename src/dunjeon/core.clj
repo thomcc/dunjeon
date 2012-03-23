@@ -79,15 +79,15 @@
 
 (defn update-tile [level pos tile] (assoc-in level [:points pos] tile))
 
-(defn place-randomly
-  ([level tile] (place-randomly level 1 tile))
-  ([level n tile]
-     (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t))
-             level
-             (repeat n tile))))
+(defn place-randomly [level n tile]
+  (reduce (fn [{p :points :as l} t] (update-tile l ((rand-elt p) 0) t))
+          level (repeat n tile)))
+
+(defn make-monster [pos] {:pos pos, :health 10})
 
 (defn add-monsters [{:keys [points] :as level} n]
-  (assoc level :monsters (set (take n (shuffle (vec points))))))
+  (let [mpts (map #(% 0) (take n (shuffle (vec points))))]
+    (assoc level :monsters (set (map make-monster mpts)))))
 
 (defn finalize [level]
   (-> (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution)
@@ -100,35 +100,59 @@
 ;; game logic
 
 (defn initialize-gamestate [level]
-  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv #{}, :score 0}})
+  {:level level, :player {:pos ((rand-elt (:points level)) 0), :health 50 :inv [], :score 0} :messages ()})
 
 (defn move [pos dir] (map + pos (directions dir)))
 
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
 
-(derive ::sword ::item)
+(defn add-msg [gs msg] (update-in gs [:messages] conj msg))
+
+(derive ::sword  ::item)
 (derive ::shield ::item)
-(derive ::armor ::item)
+(derive ::armor  ::item)
 
 (defmulti use-tile (fn [gs pos item] item))
 
 (defmethod use-tile :default [gs _ _] gs)
 (defmethod use-tile ::floor [gs _ _] gs)
 
-(defmethod use-tile ::item [gs pos it]
-  (-> gs (clear-tile pos) (update-in [:player :inv] conj it)))
+(defmethod use-tile ::item [game-state pos it]
+  (-> game-state
+      (clear-tile pos)
+      (update-in [:player :inv] conj it)
+      (add-msg (str "You pick up a shiny new " (name it) "."))))
 
-(defmethod use-tile ::booze [gs pos _]
-  (-> gs (clear-tile pos) (update-in [:player :health] + (random 5 5))))
+(defmethod use-tile ::booze [game-state pos _]
+  (let [healed (random 2 7)]
+   (-> game-state
+       (clear-tile pos)
+       (update-in [:player :health] + healed)
+       (add-msg (str "The booze heals you for " healed " points.")))))
 
-(defmethod use-tile ::gold [gs pos _]
-  (-> gs (clear-tile pos) (update-in [:player :score] + 25)))
+(defmethod use-tile ::gold [game-state pos _]
+  (-> game-state
+      (clear-tile pos)
+      (update-in [:player :score] + 25)
+      (add-msg (str "You find 25 gold on the ground. Score!"))))
 
-(defmethod use-tile ::stairs [{p :player :as gs} _ _]
+(defmethod use-tile ::stairs [{p :player :as game-state} _ _]
   (let [next-floor (gen-level 50 50 (random 4 5))]
-    (-> gs (assoc :level next-floor) (assoc-in [:player :pos] ((rand-elt (:points next-floor)) 0)))))
+    (-> game-state
+        (assoc :level next-floor)
+        (assoc-in [:player :pos] ((rand-elt (:points next-floor)) 0))
+        (add-msg "You go down the stairs."))))
 
-(defn fight [gs mon] gs)
+(defn fight [{{ms :monsters} :level :as gs} {h :health :as mon}]
+  (let [d (random 3 5), left (- h d), damaged (assoc mon :health left), alive? (pos? left), ms (disj ms mon)]
+    (-> gs
+        (assoc-in [:level :monsters] (if alive? (conj ms damaged) ms))
+        (add-msg (str "The monster " (if alive? (str "takes " d " damage.") "dies.")))
+        (update-in [:player :score] + (if alive? 0 (random 25 25))))))
+
+(defn monster-at [{{mons :monsters} :level} pos]
+  (loop [[{p :pos :as m} & ms] (seq mons)]
+    (cond (= p pos) m, (not ms) nil, :else (recur ms))))
 
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
 
@@ -137,14 +161,15 @@
 (defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
   (let [newpos (move pos dir)]
     (if ((:points level) newpos)
-      (if-let [m ((:monsters level) newpos)] (fight gs m)
+      (if-let [m (monster-at gs newpos)] (fight gs m)
               (assoc-in gs [:player :pos] newpos))
       gs)))
 
 (defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _]
   (use-tile gs p (pts p)))
 
-(defn tick [game-state input] (-> game-state (tick-player input)))
+(defn tick [game-state input]
+  (-> game-state (tick-player input)))
 
 (defn comprehend [input]
   ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south],
@@ -152,18 +177,19 @@
     KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
-(defn draw [^Graphics2D g {{pos :pos h :health s :score} :player,{:keys [points width height]} :level}]
+(defn draw [^Graphics2D g {{pos :pos h :health s :score} :player,{:keys [points width height monsters]} :level msgs :messages}]
   (doto g
     (.setColor Color/black)
     (.fillRect 0 0 panel-width panel-height)
-    (.setFont (Font. "Monospaced" Font/PLAIN 14)))
-  (doseq [xx (range width), yy (range height)]
-    (let [type (if (= [xx yy] pos) ::player (points [xx yy]))]
-;      (prn type)
-      (.setColor g (color-rep type))
-      (.drawString g (char-rep type) (* xx 11) (* yy 11))))
+    (.setFont (Font. "Monospaced" Font/PLAIN 13)))
+  (let [monpts (set (map :pos monsters))]
+    (doseq [xx (range width), yy (range (+ height 1))]
+      (let [p [xx yy], type (cond (= p pos) ::player, (monpts p) ::monster, :else (points p))]
+        (.setColor g (color-rep type))
+        (.drawString g (char-rep type) (* xx 11) (* yy 11)))))
+  (.setColor g Color/white)
+  (dorun 3 (map-indexed #(.drawString g %2 (* 15 11) (* 11 (+ 4 game-height (- %)))) msgs))
   (doto g
-    (.setColor Color/white)
     (.drawString (str "Health: " h) 11 (* 11 (+ game-height 1)))
     (.drawString (str "Score: " s) 11 (* 11 (+ game-height 2)))))
 
@@ -179,7 +205,7 @@
                (when-let [input (comprehend e)]
                  (swap! game-state tick input)
                  (.repaint panel))))]
-    (doto (JFrame. "(the dunjeon)")
+    (doto (JFrame. "(dunjeon)")
       (.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE)
       (.add panel) .pack
       (.setResizable false)
