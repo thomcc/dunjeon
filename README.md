@@ -1,15 +1,10 @@
 # dunjeon
 
-I'm an app. Or maybe I'm a library? I haven't decided yet. 
+small roguelike game in clojure.  will write more readme when done
 
-The choice is up to you!
-
-## Usage
-
-FIXME
 
 ## License
 
-Copyright © 2012 FIXME
+Copyright © 2012 Thom Chiovoloni
 
 Distributed under the Eclipse Public License, the same as Clojure.
