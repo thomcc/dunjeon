@@ -128,8 +128,8 @@
     (update-vision
      {:level level
       :player {:pos ((rand-elt (:points level)) 0),
-               :health 50 :inv [], :sees #{} :score 0}
-      :messages ()})))
+               :health 50 :inv [], :sees #{} :score 0, :level 0}
+      :messages '("You enter level 0.", "Welcome to the dunjeon.")})))
 
 
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
@@ -166,6 +166,7 @@
     (-> game-state
         (assoc :level next-floor)
         (assoc-in [:player :pos] ((rand-elt (:points next-floor)) 0))
+        (update-in [:player :level] inc)
         (add-msg "You go down the stairs."))))
 
 (defn fight [{{ms :monsters} :level :as gs} {h :health :as mon}]
@@ -210,7 +211,7 @@
     KeyEvent/VK_LEFT [:move :west], KeyEvent/VK_ENTER [:action]}
    (.getKeyCode input)))
 
-(defn draw [^Graphics2D g {{[px py :as pos] :pos h :health s :score sees :sees :as play} :player,
+(defn draw [^Graphics2D g {{[px py :as pos] :pos h :health s :score sees :sees, lv :level :as play} :player,
                            {:keys [points width height monsters seen]} :level
                            msgs :messages}]
   (doto g
@@ -232,7 +233,8 @@
   (dorun 3 (map-indexed #(.drawString g ^String %2 (* 15 11) (int (* 11 (+ 4 game-height (- %))))) msgs))
   (doto g
     (.drawString (str "Health: " h) 11 (int (* 11 (inc game-height))))
-    (.drawString (str "Score: " s) 11 (int (* 11 (+ game-height 2))))))
+    (.drawString (str "Score: " s) 11 (int (* 11 (+ game-height 2))))
+    (.drawString (str "Level: " lv) 11 (int (* 11 (+ 3 game-height))))))
 
 (defn -main [& args]
   (let [game-state (atom (initialize-gamestate))
