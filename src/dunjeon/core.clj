@@ -20,10 +20,10 @@
 
 (def panel-height (* 11 (+ game-height 5)))
 
-(def char-rep {::floor ".", nil "#", :wall "#", ::stairs ">", ::gold "$", ::booze "!",
+(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!",
                ::sword "(", ::armor "[", ::shield "+",, ::player "@", ::monster "m"})
 
-(def color-rep {::floor Color/white, nil Color/gray, ::wall Color/gray, ::stairs Color/white
+(def color-rep {::floor Color/white, nil Color/gray, ::stairs Color/white
                 ::gold Color/yellow ::booze Color/pink ::sword Color/blue ::shield Color/blue
                 ::armor Color/blue ::monster Color/red, ::player Color/green})
 
