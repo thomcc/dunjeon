@@ -1,7 +1,8 @@
 # dunjeon
 
-small roguelike game in clojure.  will write more readme when done
+A small roguelike game in clojure.
 
+Made for fun, not supposed to be especially complete or interesting.
 
 ## License
 
