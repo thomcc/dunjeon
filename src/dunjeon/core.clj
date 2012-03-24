@@ -14,6 +14,8 @@
 (defn random [min range] (+ min (rand-int range)))
 (defn rand-elt [set] (rand-nth (vec set)))
 (defn signum [x] (if (zero? x) x (if (pos? x) 1 -1)))
+(defn abssq [[x y]] (+ (* x x) (* y y)))
+(defn dist [p0 p1] (abssq (map - p0 p1))) ; really dist^2
 
 (def panel-width (* 11 game-width))
 (def panel-height (* 11 (+ game-height 5)))
@@ -75,7 +77,7 @@
   (reduce (fn [{p :points :as l} t] (assoc-in l [:points ((rand-elt p) 0)] t))
           level (repeat n tile)))
 
-(defn make-monster [pos] {:pos pos, :health 10})
+(defn make-monster [pos] {:pos pos, :health 10, :angry false})
 (defn add-monsters [{:keys [points] :as level} n]
   (let [mpts (map #(% 0) (take n (shuffle (vec points))))]
     (assoc level :monsters (set (map make-monster mpts)))))
@@ -103,22 +105,27 @@
 
 (defn update-vision [{{seen :seen :as lvl} :level,{[x y] :pos :as player} :player :as game-state}]
   (let [visible (for [xx (range -10 10), yy (range -10 10)
-                      :when (and (<= (+ (* xx xx) (* yy yy)) 100) (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
+                      :when (and (<= (abssq [xx yy]) 100) (can-see? lvl [x y] [(+ x xx) (+ y yy)]))]
                   [(+ xx x) (+ yy y)])]
     (-> game-state
         (assoc-in [:level :seen] (reduce conj seen visible))
         (assoc-in [:player :sees] (set visible)))))
 
+(defn add-msg
+  ([gs msg] (add-msg gs Color/white msg))
+  ([gs col msg] (update-in gs [:messages] conj {:col col :txt msg})))
+
 (defn initialize-gamestate []
   (let [level (gen-level game-width game-height (random 5 4))]
-    (update-vision
-     {:level level
-      :player {:pos ((rand-elt (:points level)) 0),
-               :health 50 :inv [], :sees #{} :score 0, :level 0}
-      :messages '("You enter level 0.", "Welcome to the dunjeon.")})))
+    (-> {:level level
+         :player {:pos ((rand-elt (:points level)) 0),:health 50 :inv [], :sees #{} :score 0, :level 0, :dead false}
+         :messages ()}
+        update-vision
+        (add-msg Color/blue "(entering (dungeon))")
+        (add-msg "Entered level 0."))))
 
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
-(defn add-msg [gs msg] (update-in gs [:messages] conj msg))
+
 
 (defmulti use-tile (fn [gs pos item] item))
 (defmethod use-tile :default [gs _ _] gs)
@@ -127,8 +134,8 @@
   (let [healed (random 2 7)]
     (-> game-state
         (clear-tile pos)
-       (update-in [:player :health] + healed)
-       (add-msg (str "The booze heals you for " healed " points.")))))
+        (update-in [:player :health] + healed)
+        (add-msg (str "The booze heals you for " healed " points.")))))
 
 (defmethod use-tile ::gold [game-state pos _]
   (-> game-state
@@ -144,7 +151,7 @@
         (update-in [:player :level] inc)
         (add-msg "You go down the stairs."))))
 
-(defn fight [{{ms :monsters} :level :as gs} {h :health :as mon}]
+(defn fight-pm [{{ms :monsters} :level :as gs} {h :health :as mon}]
   (let [d (random 3 5), left (- h d), damaged (assoc mon :health left), alive? (pos? left), ms (disj ms mon)]
     (-> gs
         (assoc-in [:level :monsters] (if alive? (conj ms damaged) ms))
@@ -162,18 +169,35 @@
 (defmethod tick-player :move [{{pos :pos} :player, level :level :as gs} [_ dir]]
   (let [newpos (map + pos (directions dir)), tile ((:points level) newpos), mon (monster-at gs newpos)]
     (cond (not tile) gs
-          mon (fight gs mon)
+          mon (fight-pm gs mon)
           (auto-use tile) (use-tile (assoc-in gs [:player :pos] newpos) newpos tile)
           :else (assoc-in gs [:player :pos] newpos))))
 
-(defn tick-monsters [{{ms :monsters, pts :points} :level {pp :pos} :player :as gs}]
-  (assoc-in gs [:level :monsters]
-            (set (map (fn [{p :pos :as m}]
-                        (let [d (rand-nth (vals directions)), npos (map + p d), can? (and (pts npos) (not= pp npos))]
-                          (if can? (assoc m :pos npos) m)))
-                      ms))))
+(defn die [{{:keys [level score]} :player :as gs}]
+  (-> gs (assoc-in [:player :dead] true) (assoc-in [:player :health] 0)
+      (add-msg Color/red (str "You have died on level " level " with " score " points."))
+      (add-msg Color/red "Press enter to try again.")))
 
-(defn tick [game-state input] (-> game-state (tick-player input) tick-monsters update-vision))
+(defn attack-player [gs dam]
+  (if (zero? (rand-int 4)) (add-msg gs "You dodge the monster's attack!")
+      (let [next-gs (-> gs (update-in [:player :health] - dam) (add-msg (str "The monster attacks you for " dam " damage!")))]
+        (if-not (pos? (- (:health (:player gs)) dam)) (die (assoc-in next-gs [:player :dead] true))
+                next-gs))))
+
+(defn tick-monster [{{ms :monsters pts :points :as lvl} :level {pp :pos} :player :as gs} {mp :pos :as mon}]
+  (let [vis (can-see? lvl mp pp),
+        del (if vis (map (comp signum -) pp mp) (rand-nth (vals directions))),
+        pos (map + mp del)]
+    (cond (= pos pp) (attack-player gs (random 1 6))
+          (pts pos) (-> gs (update-in [:level :monsters] disj mon) (update-in [:level :monsters] conj (assoc mon :pos pos)))
+          :else gs)))
+
+(defn tick-monsters [{{ms :monsters, pts :points} :level {pp :pos} :player :as gs}] (reduce tick-monster gs ms))
+
+(defn tick [{{dead? :dead} :player :as game-state} input]
+  (cond (not dead?) (-> game-state (tick-player input) tick-monsters update-vision)
+        (and dead? (= input [:action])) (initialize-gamestate)
+        :else game-state))
 
 (defn comprehend [^KeyEvent input]
   ({KeyEvent/VK_UP [:move :north], KeyEvent/VK_DOWN [:move :south], KeyEvent/VK_RIGHT [:move :east],
@@ -198,8 +222,11 @@
         (.setColor g (post-process (color-rep type) p-vis p-rem))
         (.drawString g ^String (char-rep type) (int (* xx 11)) (int (* yy 11))))))
   (.setColor g Color/white)
-  (dorun 3 (map-indexed #(.drawString g ^String %2 (* 15 11) (int (* 11 (+ 4 game-height (- %))))) msgs))
+  (dorun 3 (map-indexed
+            (fn [i {c :col m :txt}]
+              (doto g (.setColor c) (.drawString ^String m (* 15 11) (int (* 11 (+ 4 game-height (- i))))))) msgs))
   (doto g
+    (.setColor Color/white)
     (.drawString (str "Health: " h) 11 (int (* 11 (inc game-height))))
     (.drawString (str "Score: " s) 11 (int (* 11 (+ game-height 2))))
     (.drawString (str "Level: " lv) 11 (int (* 11 (+ 3 game-height))))))
