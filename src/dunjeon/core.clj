@@ -1,9 +1,11 @@
 (ns dunjeon.core
-  (:import [java.awt Color Graphics2D Dimension Font]
-           [javax.swing JFrame JPanel]
+  (:import [java.awt Color Graphics2D Dimension Font BorderLayout]
+           [javax.swing JFrame JPanel JApplet SwingUtilities]
            [java.awt.event KeyEvent KeyAdapter])
   (:require [clojure.set :as set])
-  (:gen-class))
+  (:gen-class :extends javax.swing.JApplet
+              :name dunjeon.core
+              :prefix "-applet-"))
 
 (set! *warn-on-reflection* true)
 
@@ -251,22 +253,23 @@
     (.setColor Color/green)
     (.drawString "Move with arrows/hjkl/fbnp/wasd/numpad. Use with enter/space/numpad5." 0 (int (* 11 (+ 8 game-height))))))
 
-(defn -main [& args]
-  (let [game-state (atom (initialize-gamestate))
-        dim (Dimension. panel-width panel-height)
-        panel (doto (proxy [JPanel] [] (paint [g] (draw g @game-state)))
-                (.setMinimumSize dim)
-                (.setPreferredSize dim)
-                (.setMaximumSize dim))
-        ka (proxy [KeyAdapter] [] (keyPressed [^KeyEvent e] (when-let [input (comprehend (.getKeyCode e))]
-                                                              (swap! game-state tick input)
-                                                              (.repaint panel))))]
-    (doto (JFrame. "(dunjeon)")
-      (.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE)
-      (.add panel) .pack
-      (.setResizable false)
-      (.setLocationRelativeTo nil)
-      (.setVisible true)
-      (.addKeyListener ka))))
+(defn -applet-init [^JApplet this]
+  (SwingUtilities/invokeLater
+   #(let [game-state (atom (initialize-gamestate))
+          dim (Dimension. panel-width panel-height)
+          panel (doto (proxy [JPanel] [] (paint [g] (draw g @game-state)))
+                  (.setMinimumSize dim)
+                  (.setPreferredSize dim)
+                  (.setMaximumSize dim))
+          ka (proxy [KeyAdapter] [] (keyPressed [^KeyEvent e] (when-let [input (comprehend (.getKeyCode e))]
+                                                                (swap! game-state tick input)
+                                                                (.repaint panel))))]
+      (.addKeyListener panel ka)
+      (doto this
+        (.setLayout (BorderLayout.))
+        (.add panel BorderLayout/CENTER)
+        (.addKeyListener ka)))))
+(defn -applet-start [this])
+(defn -applet-stop [this])
 
 
