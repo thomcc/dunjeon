@@ -8,6 +8,7 @@
 (set! *warn-on-reflection* true)
 
 ;; constants and utility functions
+
 (def key-table
    {[:move :east] #{KeyEvent/VK_NUMPAD6 KeyEvent/VK_D KeyEvent/VK_RIGHT KeyEvent/VK_L KeyEvent/VK_F}
     [:move :west] #{KeyEvent/VK_NUMPAD4 KeyEvent/VK_A KeyEvent/VK_LEFT KeyEvent/VK_H KeyEvent/VK_B}
@@ -27,23 +28,36 @@
 (def panel-width (* 11 (+ 2 game-width)))
 (def panel-height (* 11 (+ game-height 10)))
 
-(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!",::player "@", ::monster "m"})
+(def char-rep {::floor ".", nil "#", ::stairs ">", ::gold "$", ::booze "!",::player "@", ::monster "m" ::slither "s"})
 
 (def color-rep {::floor Color/white, nil Color/gray, ::stairs Color/orange, ::gold Color/yellow ::booze Color/magenta
                 ::monster Color/red, ::player Color/green})
-(def auto-use #{::gold})
+
+(def auto-use #{::gold ::booze})
+
 (def directions {:north [0 -1], :south [0 1], :east [1 0], :west [-1 0]})
 (def distribution {::gold 5, ::booze (random 3 4), ::stairs 1})
 
 ;; random dungeon generation
 
-(defn intersects [{x0 :x, y0 :y, w0 :w, h0 :h}, {x1 :x, y1 :y, w1 :w, h1 :h}]
-  (and (or (and (>= x0 x1) (<= x0 (+ x1 w1))) (and (>= x1 x0) (<= x1 (+ x0 w0))))
-       (or (and (>= y0 y1) (<= y0 (+ y1 h1))) (and (>= y1 y0) (<= y1 (+ y0 h0))))))
+(defmulti pointify :type)
 
+(defmethod pointify :rect [{x :x, y :y, width :w, height :h}]
+  (mapcat (fn [[row y]] (map #(vector % y) row))
+          (partition 2 (interleave (repeat height (range x (+ x width))) (range y (+ y height))))))
+
+(defmethod pointify :circ [{x :x, y :y width :w height :h}]
+  (let [rad (/ width 2)]
+    (for [xx (range (- rad) rad), yy (range (- rad) rad)
+          :when (< (+ (* xx xx) (* yy yy)) (* rad rad))] [(+ x rad xx) (+ y rad yy)])))
+
+(defn intersects [r0 r1] (not (empty? (set/intersection (set (pointify r0)) (set (pointify r1))))))
 (defn empty-map [w h] {:width w, :height h, :rooms #{}})
+
 (defn room [{:keys [width height]}]
-  {:x (random 2 (- width 14)) :y (random 2 (- height 14)) :w (random 3 10) :h (random 3 10)})
+  (if (zero? (rand-int 3))
+      (let [s (random 3 10)] {:type :circ :x (random 2 (- width 14)) :y (random 2 (- height 14)) :w s, :h s})
+      {:type :rect :x (random 2 (- width 14)) :y (random 2 (- height 14)) :w (random 3 10) :h (random 3 10)}))
 
 (defn add-rooms
   ([level n] (nth (iterate add-rooms level) n))
@@ -54,26 +68,21 @@
                (> i 1000) level
                :else (recur (room level) (inc i)))))))
 
-(defn connect [{:keys [width height]}, {fx :x, fy :y, fw :w, fh :h}, {tx :x, ty :y, tw :w, th :h}]
-  (let [x0 (random fx fw), y0 (random fy fh)
-        x1 (random tx tw), y1 (random ty th)
+(defn connect [{:keys [width height]} r0 r1]
+  (let [[x0 y0] (rand-nth (pointify r0)),
+        [x1 y1] (rand-nth (pointify r1)),
         dx (signum (- x1 x0)), dy (signum (- y1 y0))]
     (loop [x x0, y y0, points #{}, horizontal? (not= (rand-int 2))]
       (if (and (= x x1) (= y y1)) points
           (let [[x y] (if (or (= y y1) (and horizontal? (not= x x1))) [(+ x dx) y] [x (+ y dy)])]
-            (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points        ; i use not= instead of zero? here
-                    (recur x y (conj points [x y]) (not= 0 (rand-int 10))))))))) ; because otherwise compiler complains.
+            (if-not (and (> x 0) (> y 0) (< x width) (< y height)) points
+                    (recur x y (conj points [x y]) (not= 0 (rand-int 10)))))))))
 
 (defn connect-rooms [{:keys [width, height, rooms] :as level}]
   (loop [from (rand-elt rooms), conn #{from}, unconn (disj rooms from), paths #{}]
     (if (empty? unconn) (assoc level :paths paths)
       (let [to (rand-elt unconn), unconn (disj unconn to), conn (conj conn to)]
         (recur (rand-elt conn), conn, unconn, (conj paths (connect level from to)))))))
-
-(defn pointify [{x :x, y :y, width :w, height :h}]
-  (mapcat (fn [[row y]] (map #(vector % y) row))
-          (partition 2 (interleave (repeat height (range x (+ x width)))
-                                   (range y (+ y height))))))
 
 (defn levelify-map [{:keys [width, height, rooms, paths]}]
   {:width width, :height height, :seen #{},
@@ -84,13 +93,16 @@
   (reduce (fn [{p :points :as l} t] (assoc-in l [:points ((rand-elt p) 0)] t))
           level (repeat n tile)))
 
-(defn make-monster [pos] {:pos pos, :health 10, :angry false})
+(defn make-monster [pos] {:pos pos, :health 10})
+
 (defn add-monsters [{:keys [points] :as level} n]
   (let [mpts (map #(% 0) (take n (shuffle (vec points))))]
     (assoc level :monsters (set (map make-monster mpts)))))
 
+
 (defn finalize [level]
-  (add-monsters (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution) (random 5 5)))
+  (add-monsters (reduce (fn [lvl [item, num]] (place-randomly lvl num item)) level distribution)
+                (random 5 5)))
 
 (defn gen-level [width height rooms]
   (-> (empty-map width height) (add-rooms rooms) connect-rooms levelify-map finalize))
@@ -138,9 +150,7 @@
 (defmethod use-tile :default [gs _ _] gs)
 (defmethod use-tile ::floor [gs _ _] gs)
 (defmethod use-tile ::booze [{{h :health l :level} :player :as game-state} pos _]
-  (let [healed (random 8 8)
-        hnow (min (+ (* 5 l) 50) (+ h healed))
-        del (- hnow h)]
+  (let [healed (random 8 8) hnow (min (+ (* 5 l) 50) (+ h healed)) del (- hnow h)]
     (-> game-state
         (clear-tile pos)
         (assoc-in [:player :health] hnow)
@@ -175,9 +185,9 @@
   (if (and (< h 50) (zero? (rand-int 5))) (update-in gs [:player :health] + (rand-int (+ l 3))) gs))
 
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
+
 (defmethod tick-player :default [game-state _] game-state)
 (defmethod tick-player :action [{{p :pos} :player, {pts :points} :level :as gs} _] (use-tile gs p (pts p)))
-
 (defmethod tick-player :move [{{pos :pos h :health} :player, level :level :as gs} [_ dir]]
   (let [newpos (map + pos (directions dir)), tile ((:points level) newpos), mon (monster-at gs newpos)]
     (cond (not tile) gs
@@ -229,8 +239,7 @@
     (.translate 11.0 11.0))
   (let [monpts (set/intersection sees (set (map :pos monsters)))
         post-process (fn [col sees? seen?]
-                       (cond (not (or sees? seen?)) Color/black
-                             (not sees?) (.darker (.darker ^Color col))
+                       (cond (not sees?) (.darker (.darker ^Color col))
                              :else col))]
     (doseq [xx (range width), yy (range (inc height))]
       (let [p [xx yy],
@@ -249,24 +258,32 @@
     (.drawString (str "Score:  " s) 0 (int (* 11 (+ game-height 4))))
     (.drawString (str "Level:  " lv) 0 (int (* 11 (+ 5 game-height))))
     (.setColor Color/green)
-    (.drawString "Move with arrows/hjkl/fbnp/wasd/numpad. Use with enter/space/numpad5." 0 (int (* 11 (+ 8 game-height))))))
+    (.drawString "Move is arrows/hjkl/numpad/wasd. Action is ret/spc/num5." 0 (int (* 11 (+ 8 game-height))))))
 
-(defn -main [& args]
+(defn create-ui []
   (let [game-state (atom (initialize-gamestate))
         dim (Dimension. panel-width panel-height)
         panel (doto (proxy [JPanel] [] (paint [g] (draw g @game-state)))
                 (.setMinimumSize dim)
                 (.setPreferredSize dim)
                 (.setMaximumSize dim))
-        ka (proxy [KeyAdapter] [] (keyPressed [^KeyEvent e] (when-let [input (comprehend (.getKeyCode e))]
-                                                              (swap! game-state tick input)
-                                                              (.repaint panel))))]
+        ka (proxy [KeyAdapter] []
+             (keyPressed [^KeyEvent e]
+               (when-let [input (comprehend (.getKeyCode e))]
+                 (swap! game-state tick input)
+                 (.repaint panel))))]
+    {:panel panel, :ka ka}))
+
+(defn init-frame []
+  (let [{:keys [panel ka]} (create-ui)]
     (doto (JFrame. "(dunjeon)")
       (.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE)
-      (.add panel) .pack
+      (.add ^JPanel panel) .pack
       (.setResizable false)
       (.setLocationRelativeTo nil)
       (.setVisible true)
-      (.addKeyListener ka))))
+      (.addKeyListener ^KeyListener ka))))
+
+(defn -main [& args] (init-frame)) 
 
 
