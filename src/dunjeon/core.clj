@@ -274,16 +274,9 @@
                  (.repaint panel))))]
     {:panel panel, :ka ka}))
 
-(defn init-frame []
-  (let [{:keys [panel ka]} (create-ui)]
-    (doto (JFrame. "(dunjeon)")
-      (.setDefaultCloseOperation JFrame/EXIT_ON_CLOSE)
-      (.add ^JPanel panel) .pack
-      (.setResizable false)
-      (.setLocationRelativeTo nil)
-      (.setVisible true)
-      (.addKeyListener ^KeyListener ka))))
 
-(defn -main [& args] (init-frame)) 
+
+;; (defn -main [& args] (init-frame))
+
 
 
