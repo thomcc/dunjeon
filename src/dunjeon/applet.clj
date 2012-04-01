@@ -10,7 +10,7 @@
 (defn -applet-init [^JApplet this]
   (SwingUtilities/invokeLater
    #(let [{:keys [^JPanel panel, ^KeyListener ka]} (create-ui), ^Container pane (.getContentPane this)]
-      (doto pane (.setLayout (BorderLayout.)) (.add panel BorderLayout/CENTER))
+      (doto pane (.setLayout (BorderLayout.)) (.add panel BorderLayout/CENTER) (.addKeyListener ka))
       (doto this (.addKeyListener ka)))))
 
 
