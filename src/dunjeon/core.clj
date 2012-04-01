@@ -144,13 +144,13 @@
         (add-msg "Entered level 0."))))
 
 (defn clear-tile [gs pos] (assoc-in gs [:level :points pos] ::floor))
-
+(defn max-health [{l :level}] (+ 50 (* 5 l)))
 
 (defmulti use-tile (fn [gs pos item] item))
 (defmethod use-tile :default [gs _ _] gs)
 (defmethod use-tile ::floor [gs _ _] gs)
-(defmethod use-tile ::booze [{{h :health l :level} :player :as game-state} pos _]
-  (let [healed (random 8 8) hnow (min (+ (* 5 l) 50) (+ h healed)) del (- hnow h)]
+(defmethod use-tile ::booze [{{h :health l :level :as p} :player :as game-state} pos _]
+  (let [healed (random 8 8) hnow (min (max-health p) (+ h healed)) del (- hnow h)]
     (-> game-state
         (clear-tile pos)
         (assoc-in [:player :health] hnow)
@@ -181,8 +181,10 @@
   (loop [[{p :pos :as m} & ms] (seq mons)]
     (cond (= p pos) m, (not ms) nil, :else (recur ms))))
 
-(defn autoheal [{{l :level h :health} :player :as gs}]
-  (if (and (< h 50) (zero? (rand-int 5))) (update-in gs [:player :health] + (rand-int (+ l 3))) gs))
+(defn autoheal [{{l :level h :health :as p} :player :as gs}]
+  (if (and (< h (max-health p)) (zero? (rand-int 5)))
+    (update-in gs [:player :health] + (min (max-health p) (rand-int (+ l 3))))
+    gs))
 
 (defmulti tick-player (fn [gamestate [kind & args]] kind))
 
